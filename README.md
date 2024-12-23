@@ -29,8 +29,10 @@ Copy the following files to their corresponding folders: `controll_gui_with_gaus
 
 2. Use VHAP to track a video or multiview video using the monocular steps and merge the output with the final step in nersemble (check vhap/doc). 
 
-3. After building the point cloud and flame sequence in step 2, train a gaussian splating of the point cloud.
+3. After building the point cloud and flame sequence in step 2, train a gaussian splating of the point cloud, please follow the step of GaussianAvatars. 
 
-4. Use local_viewer.py in GaussianAvatars to view the results with the path to the output of the previous step.
-
-5. Run PainDiffusion by `python controll_gui_with_gaussian_avatars.py` to drive the avatar according to pain stimuli.
+4. In GaussianAvatars dir and using its env, use local_viewer.py of in GaussianAvatars to view the results with the path to the output of the previous step.
+```python
+python local_viewer.py --point_path '/path/to/point_cloud.ply' --driving_mode
+```
+6. Run PainDiffusion by `python controll_gui_with_gaussian_avatars.py` to drive the avatar according to pain stimuli.
