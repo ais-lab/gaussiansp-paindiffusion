@@ -2,6 +2,8 @@
 
 It's fast, high-quality rendering, with teeth...
 
+[gaussianavatars_with_paindiffusion.webm](https://github.com/user-attachments/assets/c255054a-a31b-47dd-b7d3-8e1970086962)
+
 Based on:
 - PainDiffusion for pain expression
 - GaussianAvatars
