@@ -14,27 +14,21 @@ Based on:
 
 To keep the installation simple, each component will be installed in a different environment.
 
-1. Clone this repo.
-2. GaussianAvatars (https://github.com/ShenhanQian/GaussianAvatars/tree/main)
-     1. Clone the repo.
-     2. Install its environment.
-3. VHAP (https://github.com/ShenhanQian/VHAP)
-     1. Clone the repo.
-     2. Install its environment.
-4. PainDiffusion (https://github.com/ais-lab/paindiffusion)
-     1. Clone the repo.
-     2. Install its environment.
-     
-Copy the following files to their corresponding folders: `controll_gui_with_gaussian_avatars.py` -> paindiffusion, `localviewer.py` -> gaussianavatars.
+Clone this repository use recursive flag to pull all submodules at once.
+`git clone --recursive https://github.com/ais-lab/gaussiansp-paindiffusion`
 
-Update the path to config file in each file.
+For each component, follow their own readme to install their environment.
+     
+Copy the following files to their corresponding folders: `controll_gui_with_gaussian_avatars.py` -> paindiffusion, `localviewer.py` -> gaussianavatars. This two files communicate through reading and writing to a share-memory file.
 
 ## Use
 
-1. Change the flame model of CHAP and GaussianAvatars at (gaussianAvatars/flame_model/flame.py) and (vhap/model/flame.py) to flame2020, which should be `generic_model.pkl` from https://flame.is.tue.mpg.de/login.php.
+1. Change the flame model of CHAP and GaussianAvatars at (gaussianAvatars/flame_model/flame.py) and (vhap/model/flame.py) to flame2020, which should be `generic_model.pkl` from https://flame.is.tue.mpg.de/login.php. Because PainDiffusion use flame2020.
 
-2. Use VHAP to track a video or multiview video using the monocular steps and merge the output with the final step in nersemble (check vhap/doc).
+2. Use VHAP to track a video or multiview video using the monocular steps and merge the output with the final step in nersemble (check vhap/doc). 
 
-3. After building the point cloud and flame sequence, use local_viewer.py in GaussianAvatars to view the results with the path to the output of the previous step.
+3. After building the point cloud and flame sequence in step 2, train a gaussian splating of the point cloud.
 
-4. Run PainDiffusion by `python controll_gui_with_gaussian_avatars.py` to drive the avatar according to pain stimuli.
+4. Use local_viewer.py in GaussianAvatars to view the results with the path to the output of the previous step.
+
+5. Run PainDiffusion by `python controll_gui_with_gaussian_avatars.py` to drive the avatar according to pain stimuli.

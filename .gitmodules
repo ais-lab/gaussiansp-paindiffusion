@@ -1,0 +1,9 @@
+[submodule "gaussianavatars"]
+	path = gaussianavatars
+	url = https://github.com/ShenhanQian/GaussianAvatars/
+[submodule "VHAP"]
+	path = VHAP
+	url = https://github.com/ShenhanQian/VHAP
+[submodule "paindiffusion"]
+	path = paindiffusion
+	url = https://github.com/ais-lab/paindiffusion
