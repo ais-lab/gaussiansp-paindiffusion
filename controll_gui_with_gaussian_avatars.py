@@ -1,9 +1,5 @@
-import io
-import socket
-import gradio as gr
 import threading
 import time
-import asyncio
 from lightning import Trainer
 import numpy as np
 from collections import deque
@@ -12,8 +8,23 @@ import torch
 import yaml
 from diffusion.elucidated_for_video import ElucidatedDiffusion
 
-from diffusion.module.utils.biovid import BioVidDM, savitzky_golay, bilateral_filter
+from diffusion.module.utils.biovid import BioVidDM, bilateral_filter
 # from inferno_package.render_from_exp import decode_latent_to_image
+
+import serial
+from dataclasses import dataclass
+import tyro
+
+emotion_map = {
+    "Anger": 0,
+    "Contempt": 1,
+    "Disgust": 2,
+    "Fear": 3,
+    "Happiness": 4,
+    "Neutral": 5,
+    "Sadness": 6,
+    "Surprise": 7
+}
 
 def load_model(conf_file) -> ElucidatedDiffusion:
 
@@ -40,42 +51,47 @@ def load_model(conf_file) -> ElucidatedDiffusion:
     
     return model
 
-model = load_model("configure/scale_jawpose_window_32.yml")
-default_face = 'default_face/'
-
-# Initialize shared variables
-current_stimuli = {
-    'pain_stimuli': 30,
-    'pain_configuration': 5,
-    'emotion_status': 5,
-    'scripted_pain_stimuli': None
-}
-
-
-frame_queue = deque()
-stimuli_queue = deque(maxlen=32)  # Fixed size queue
-
-past_frames = None
-current_frame = None
-stop_threads_flag = False
-
-scheduling_matrix = None
-
-sr = 25  # Sampling rate in Hz
-generate_fps = 25  # Frame generation rate in Hz
-window_size = 32
-smooth_window = deque(maxlen=2)
-
-
-host = "localhost"
-port = 5000
-
 def stimuli_sampling_loop():
+    
     global stop_threads_flag
+    global external_mode
+    global is_arduino_avai
+    
     while not stop_threads_flag:
-        # Sample current stimuli values
-        stimuli_sample = current_stimuli.copy()
-        # print(f"Stimuli sampling loop: {stimuli_sample['pain_stimuli']}, {stimuli_sample['pain_configuration']}, {stimuli_sample['emotion_status']}")
+        
+        # read config value from UI
+        try:
+            config = torch.load(ramdisk_path_from_ui_to_paindiff)
+        except Exception as e:
+            print('read error')
+            continue
+        emotion_status = emotion_map[config['emotion_status']]
+        pain_configuration = config['pain_configuration']
+        external_mode = config['external_mode']
+        
+        # print(f"External mode: {external_mode}")
+        # print(f"Emotion status: {emotion_status}")
+        # print(f"Pain configuration: {pain_configuration}")
+        # print(f"Arduino available: {is_arduino_avai}")
+        
+        # read value from arduino
+        if is_arduino_avai and external_mode:
+            arduino_val = arduino.readline().decode('utf-8').strip()
+            if not arduino_val:
+                continue        
+            heat_stimuli = float(arduino_val)
+        else:
+            heat_stimuli = config['pain_stimuli']
+            
+        # print(f"Heat stimuli: {heat_stimuli}")
+            
+        stimuli_sample = {
+            'pain_stimuli': heat_stimuli,
+            'pain_configuration': pain_configuration,
+            'emotion_status': emotion_status,
+            'scripted_pain_stimuli': None
+        }
+        
         # Append to stimuli_queue
         stimuli_queue.append(stimuli_sample)
         # Sleep for sampling interval
@@ -83,9 +99,7 @@ def stimuli_sampling_loop():
 
 def model_loop():
     global stop_threads_flag
-    
-    ramdisk_path = "/dev/shm/frames_paindiffusion.pt"
-    
+        
     target_interval = 1.0 / generate_fps
     
     while not stop_threads_flag:
@@ -98,7 +112,6 @@ def model_loop():
             continue
         
         smooth_window.append(frames.cpu().numpy())
-        
         
         smoothed_frames = np.concatenate(smooth_window, axis=0)
         
@@ -123,7 +136,7 @@ def model_loop():
             
         print(f"Prediction time: {prediction_time}, Frame interval: {frame_interval}")
         
-        torch.save((smoothed_frames[frames.shape[0]:], time.time(), target_interval), ramdisk_path)
+        torch.save((smoothed_frames[frames.shape[0]:], time.time(), target_interval), ramdisk_path_from_paindiff_to_ui)
         # torch.save((frames, time.time(), target_interval), ramdisk_path)
 
 def generate_frames(stimuli_values):
@@ -159,89 +172,48 @@ def generate_frames(stimuli_values):
     return prediction_tensor
                   
 
-# Global variable to keep track of the decay thread
-decay_thread = None
+@dataclass
+class Config:
+    conf_file: str = "/home/tien/paindiffusion_gaussian_avatars/paindiffusion/configure/scale_jawpose_window_32.yml"
+    arduino_port: str = "/dev/ttyACM0"
+    arduino_baudrate: int = 9600
+    ramdisk_path_from_paindiff_to_ui: str = "/dev/shm/frames_paindiffusion.pt"
+    ramdisk_path_from_ui_to_paindiff: str = "/dev/shm/config_paindiffusion.pt"
+    sr: int = 25  # Sampling rate in Hz
+    generate_fps: int = 25  # Frame generation rate in Hz
+    window_size: int = 32
+    smooth_window_size: int = 2
 
-def update_pain_stimuli(pain_stimuli):
-    current_stimuli['pain_stimuli'] = pain_stimuli
+if __name__ == "__main__":
+    config = tyro.cli(Config)
 
-async def decay_pain_stimuli():
-    start_value = current_stimuli['pain_stimuli']
-    original_value = 30
-    duration = 5  # Duration in seconds
-    steps = 50
-    step_delay = duration / steps
-    step_value = (start_value - original_value) / steps
+    model = load_model(config.conf_file)
+    default_face = 'default_face/'
+    
+    external_mode = True
+    is_arduino_avai = True
+    try:
+        arduino = serial.Serial(config.arduino_port, config.arduino_baudrate)
+    except Exception as e:
+        print(f"Error: {e}")
+        is_arduino_avai = False
+    
+    ramdisk_path_from_paindiff_to_ui = config.ramdisk_path_from_paindiff_to_ui
+    ramdisk_path_from_ui_to_paindiff = config.ramdisk_path_from_ui_to_paindiff
 
-    for _ in range(steps):
-        await asyncio.sleep(step_delay)
-        start_value -= step_value
-        if start_value < original_value:
-            start_value = original_value
-        current_stimuli['pain_stimuli'] = start_value
-        yield start_value  # Update the slider in the UI
+    frame_queue = deque()
+    stimuli_queue = deque(maxlen=config.window_size)  # Fixed size queue
 
-def update_other_stimuli(pain_configuration, emotion_status):
-    current_stimuli['pain_configuration'] = pain_configuration
-    emotion_map = {
-        "Anger": 0,
-        "Contempt": 1,
-        "Disgust": 2,
-        "Fear": 3,
-        "Happiness": 4,
-        "Neutral": 5,
-        "Sadness": 6,
-        "Surprise": 7
-    }
-    current_stimuli['emotion_status'] = emotion_map[emotion_status]
+    past_frames = None
+    stop_threads_flag = False
 
-# Start threads
-stimuli_thread = threading.Thread(target=stimuli_sampling_loop)
-model_thread = threading.Thread(target=model_loop)
-stimuli_thread.start()
-model_thread.start()
+    sr = config.sr
+    generate_fps = config.generate_fps
+    window_size = config.window_size
+    smooth_window = deque(maxlen=config.smooth_window_size)
 
-with gr.Blocks() as demo:
-    gr.HTML('''
-    <h1 class="title is-1 publication-title">PainDiffusion: Can robot express pain?</h1>
-    ''')
-
-    with gr.Row():
-        pain_stimuli_slider = gr.Slider(30, 60, value=30, label="Heat Stimuli", step=0.1)
-        pain_configuration_slider = gr.Slider(5, 11, value=5, label="Pain Configuration", step=0.1)
-        emotion_status_radio = gr.Radio(
-            choices=[
-                "Anger", "Contempt", "Disgust", "Fear",
-                "Happiness", "Neutral", "Sadness", "Surprise"
-            ],
-            value="Neutral",
-            label="Emotion Status"
-        )
-
-    # Update pain_stimuli in real-time as the slider moves
-    pain_stimuli_slider.input(
-        fn=update_pain_stimuli,
-        inputs=pain_stimuli_slider,
-        outputs=None
-    )
-
-    # Start decay when the slider is released
-    pain_stimuli_slider.release(
-        fn=decay_pain_stimuli,
-        inputs=None,
-        outputs=pain_stimuli_slider  # Update the slider value in the UI
-    )
-
-    # Update other stimuli when their sliders change
-    pain_configuration_slider.change(
-        fn=update_other_stimuli,
-        inputs=[pain_configuration_slider, emotion_status_radio],
-        outputs=None
-    )
-    emotion_status_radio.change(
-        fn=update_other_stimuli,
-        inputs=[pain_configuration_slider, emotion_status_radio],
-        outputs=None
-    )
-
-demo.launch()
+    # Start threads
+    stimuli_thread = threading.Thread(target=stimuli_sampling_loop)
+    model_thread = threading.Thread(target=model_loop)
+    stimuli_thread.start()
+    model_thread.start()

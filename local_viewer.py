@@ -64,6 +64,14 @@ class Config(Mini3DViewerConfig):
     load it like a normal sequence. """
     demo_mode: bool = False
     """The UI will be simplified in demo mode."""
+    driving_mode: bool = False
+    """Use paindiffusion to drive the FLAME parameters."""
+    ramdisk_path_from_paindiffusion_to_ui: str = "/dev/shm/frames_paindiffusion.pt"
+    """Path to the ramdisk for receiving flame parameters from paindiffusion."""
+    ramdisk_path_from_ui_to_paindiffusion: str = "/dev/shm/config_paindiffusion.pt"
+    """Path to the ramdisk for sending configuration to paindiffusion."""
+    send_rate_to_paindiffusion: int = 25
+    """The rate of sending flame parameters to paindiffusion."""
 
 class LocalViewer(Mini3DViewer):
     def __init__(self, cfg: Config):
@@ -102,8 +110,12 @@ class LocalViewer(Mini3DViewer):
             self.gaussians.select_mesh_by_timestep(self.timestep)
             
         self.fps = 30
-        threading.Thread(target=self.receive_flame_params, daemon=True).start()
-        threading.Thread(target=self.update_flame_param, daemon=True).start()
+        self.reset_paindiffusion_config() if self.cfg.driving_mode else None
+
+        threading.Thread(target=self.receive_flame_params, daemon=True).start() if self.cfg.driving_mode else None
+        threading.Thread(target=self.update_flame_param, daemon=True).start() if self.cfg.driving_mode else None
+        threading.Thread(target=self.send_paindiffusion_config, daemon=True).start() if self.cfg.driving_mode else None
+        
         
     def init_gaussians(self):
         # load gaussians
@@ -307,15 +319,29 @@ class LocalViewer(Mini3DViewer):
             'eyes': torch.zeros(1, 6),
             'translation': torch.zeros(1, 3),
         }
-        
+    
+    def reset_paindiffusion_config(self):
+        self.paindiffusion_config = {
+            'emotion_status': "Neutral",
+            'pain_configuration': torch.zeros(1),
+            'pain_stimuli': torch.zeros(1),
+            'external_mode': False, # 'external' or 'internal'
+        }
+    
+    def get_current_paindiffusion_config(self):
+        if self.paindiffusion_config is None:
+            self.reset_paindiffusion_config()
+        return self.paindiffusion_config
+    
+    def set_paindiffusion_config(self, config):
+        self.paindiffusion_config = config
     
     def receive_flame_params(self):
-        ramdisk_path = "/dev/shm/frames_paindiffusion.pt"
         old_read_time = time.time()
         while True:
             if self.receive_flame_over_network:
                 try:
-                    frames, read_time, display_interval = torch.load(ramdisk_path)
+                    frames, read_time, display_interval = torch.load(self.cfg.ramdisk_path_from_paindiffusion_to_ui)
                     
                     if read_time == old_read_time:
                         time.sleep(0.1)
@@ -325,6 +351,15 @@ class LocalViewer(Mini3DViewer):
                     self.network_queue.append((frames, display_interval))
                 except Exception as e:
                     time.sleep(0.1)
+                    
+    def send_paindiffusion_config(self):
+        
+        send_interval = 1.0 / self.cfg.send_rate_to_paindiffusion
+        
+        while True:
+            if self.paindiffusion_config is not None:
+                torch.save(self.paindiffusion_config, self.cfg.ramdisk_path_from_ui_to_paindiffusion)
+                time.sleep(send_interval)
                 
     def update_flame_param(self):
         while True:
@@ -629,7 +664,7 @@ class LocalViewer(Mini3DViewer):
                 # add button for receive flame over network
                 def callback_receive_flame(sender, app_data):
                     self.receive_flame_over_network = app_data
-                dpg.add_checkbox(label="receive flame over network", default_value=False, callback=callback_receive_flame, tag="_checkbox_receive_flame")
+                dpg.add_checkbox(label="receive flame over network", default_value=False, callback=callback_receive_flame, tag="_checkbox_receive_flame") if self.cfg.driving_mode else None
 
                 def callback_reset_flame(sender, app_data):
                     self.reset_flame_param()
@@ -641,6 +676,44 @@ class LocalViewer(Mini3DViewer):
                         dpg.set_value(slider, 0)
                 dpg.add_button(label="reset FLAME", tag="_button_reset_flame", callback=callback_reset_flame)
 
+        # window: paindiffusion control ==================================================================================================
+        if self.cfg.driving_mode:
+            with dpg.window(label="Paindiffusion Controller", tag="_paindiffusion_window", autosize=True, pos=(self.W-300, 300)):
+                
+                def callback_set_pain_stimuli(sender, app_data):
+                    print("pain stimuli", app_data)
+                    self.paindiffusion_config['pain_stimuli'] = app_data
+                dpg.add_slider_float(label="Heat Stimuli", min_value=30, max_value=60, default_value=30, tag="pain_stimuli_slider", callback=callback_set_pain_stimuli)
+                            
+                def callback_set_pain_configuration(sender, app_data):
+                    print("pain configuration", app_data)
+                    self.paindiffusion_config['pain_configuration'] = app_data
+                dpg.add_slider_float(label="Pain Configuration", min_value=5, max_value=11, default_value=5, tag="pain_configuration_slider", callback=callback_set_pain_configuration)
+                
+                dpg.add_text("Emotion Status")
+                def callback_set_emotion_status(sender, app_data):
+                    self.paindiffusion_config['emotion_status'] = app_data
+                    print("emotion status", app_data)
+                dpg.add_radio_button(label="Emotion Status", items=[
+                    "Anger", "Contempt", "Disgust", "Fear",
+                    "Happiness", "Neutral", "Sadness", "Surprise"
+                ], default_value="Neutral", tag="emotion_status_radio", callback=callback_set_emotion_status)
+                
+                dpg.add_text("Pain Stimuli")
+                def callback_set_paindiffusion_mode(sender, app_data):
+                    self.paindiffusion_config['external_mode'] = app_data
+                    print("paindiffusion mode", app_data)
+                dpg.add_checkbox(label="mode", default_value=True, tag="_checkbox_external_mode", callback=callback_set_paindiffusion_mode)
+                
+                def callback_reset_paindiffusion(sender, app_data):
+                    self.reset_paindiffusion_config()
+                    dpg.set_value("pain_stimuli_slider", 30)
+                    dpg.set_value("pain_configuration_slider", 5)
+                    dpg.set_value("emotion_status_radio", "Neutral")
+                    dpg.set_value("_checkbox_external_mode", True)
+                    
+                dpg.add_button(label="reset paindiffusion", tag="_button_reset_paindiffusion", callback=callback_reset_paindiffusion)
+        
         # widget-dependent handlers ========================================================================================
         # with dpg.handler_registry():
         #     dpg.add_key_press_handler(dpg.mvKey_Left, callback=callback_set_current_frame, tag='_mvKey_Left')
