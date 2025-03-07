@@ -26,30 +26,15 @@ emotion_map = {
     "Surprise": 7
 }
 
-def load_model(conf_file) -> ElucidatedDiffusion:
+def load_from_hub(model_id="damtien440/paindiffusion", **kwargs):
 
-    with open(conf_file, "r") as f:
-        conf = yaml.safe_load(f)
-
-    best_checkpoint = conf["BEST_CKPT"]
-    
-    model = ElucidatedDiffusion.from_conf(conf_file)
-
-    trainer = Trainer(
-        max_epochs=100,
-        accelerator="gpu",
-        devices=1,
-        fast_dev_run=1,
-        logger=False,
-    )
-
-    biovid = BioVidDM.from_conf(conf_file)
-    trainer.test(model, datamodule=biovid, ckpt_path=best_checkpoint)
-
+    # Create a new model instance with the saved configuration
+    model = ElucidatedDiffusion._from_pretrained(model_id)
     model = model.eval()
     model = model.cuda()
     
     return model
+
 
 def stimuli_sampling_loop():
     
@@ -174,7 +159,6 @@ def generate_frames(stimuli_values):
 
 @dataclass
 class Config:
-    conf_file: str = "/home/tien/paindiffusion_gaussian_avatars/paindiffusion/configure/scale_jawpose_window_32.yml"
     arduino_port: str = "/dev/ttyACM0"
     arduino_baudrate: int = 9600
     ramdisk_path_from_paindiff_to_ui: str = "/dev/shm/frames_paindiffusion.pt"
@@ -187,7 +171,7 @@ class Config:
 if __name__ == "__main__":
     config = tyro.cli(Config)
 
-    model = load_model(config.conf_file)
+    model = load_from_hub()
     default_face = 'default_face/'
     
     external_mode = True
